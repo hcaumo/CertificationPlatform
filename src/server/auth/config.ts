@@ -77,6 +77,20 @@ export const authConfig = {
       }
       return token;
     },
+    redirect({ url, baseUrl }) {
+      // Always redirect to dashboard after successful authentication
+      if (url.startsWith(baseUrl)) {
+        // Handle relative callback URLs
+        if (url.includes("/api/auth") || url.includes("/auth/signin")) {
+          return `${baseUrl}/dashboard`;
+        }
+        return url;
+      } else if (url.startsWith("/")) {
+        // Handle relative callback URLs
+        return `${baseUrl}${url}`;
+      }
+      return baseUrl;
+    },
   },
   pages: {
     signIn: '/auth/signin',

@@ -1,270 +1,216 @@
 "use client";
 
 import React, { useState } from 'react';
-import { useSession } from 'next-auth/react';
-import { redirect } from 'next/navigation';
+import { useRouter, usePathname } from 'next/navigation';
+import { useSession, signOut } from 'next-auth/react';
+import Link from 'next/link';
 
-interface WalletInteraction {
-  from: string;
-  to: string;
-  timestamp: string;
-  txHash: string;
-  value: string;
-  network: string;
-}
-
-// Mock data for demonstration
-const MOCK_INTERACTIONS: WalletInteraction[] = [
-  {
-    from: '0x742d35Cc6634C0532925a3b844Bc454e4438f44e',
-    to: '0x8626f6940E2eb28930eFb4CeF49B2d1F2C9C1199',
-    timestamp: '2023-06-15T14:32:11Z',
-    txHash: '0xf7d4d62b9e3b9d6fa1d1fe61d45d97429d3c35bdd695d2aad96c0fecb00ec582',
-    value: '1.25 ETH',
-    network: 'Ethereum'
-  },
-  {
-    from: '0x8626f6940E2eb28930eFb4CeF49B2d1F2C9C1199',
-    to: '0x742d35Cc6634C0532925a3b844Bc454e4438f44e',
-    timestamp: '2023-07-22T09:14:33Z',
-    txHash: '0x3a8e692b2a52d6a45b5bde74f520c8a77c63b32b2b22642e8d5a4c2b5fd0d3a1',
-    value: '0.5 ETH',
-    network: 'Ethereum'
-  }
-];
-
-export default function WalletAnalyzerPage() {
-  const { data: session, status } = useSession({
-    required: true,
-    onUnauthenticated() {
-      redirect('/auth/signin');
-    },
-  });
-
-  const [walletA, setWalletA] = useState('');
-  const [walletB, setWalletB] = useState('');
-  const [network, setNetwork] = useState('all');
-  const [timeframe, setTimeframe] = useState('all');
-  const [results, setResults] = useState<WalletInteraction[] | null>(null);
-  const [isLoading, setIsLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  // Function to check wallet interactions
-  const checkInteractions = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setIsLoading(true);
-    setError(null);
-
-    try {
-      // Validate inputs
-      if (!walletA || !walletB) {
-        throw new Error('Both wallet addresses are required');
-      }
-
-      if (!isValidEthereumAddress(walletA) || !isValidEthereumAddress(walletB)) {
-        throw new Error('Invalid wallet address format');
-      }
-
-      // In a real app, you would make an API call to fetch interactions
-      // For demonstration, we're using mock data
-      await new Promise(resolve => setTimeout(resolve, 1000)); // Simulate API call
-
-      // Filter mock data based on the addresses
-      const filteredResults = MOCK_INTERACTIONS.filter(
-        interaction => 
-          (interaction.from.toLowerCase() === walletA.toLowerCase() && 
-           interaction.to.toLowerCase() === walletB.toLowerCase()) ||
-          (interaction.from.toLowerCase() === walletB.toLowerCase() && 
-           interaction.to.toLowerCase() === walletA.toLowerCase())
-      );
-
-      setResults(filteredResults);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'An unknown error occurred');
-      setResults(null);
-    } finally {
-      setIsLoading(false);
+const Navigation = () => {
+    const router = useRouter();
+    const pathname = usePathname();
+    // Don't require the session to avoid auth loops
+    const { data: session, status } = useSession();
+    const isAuthenticated = status === 'authenticated';
+    const [isMenuOpen, setIsMenuOpen] = useState(false);
+    
+    // Don't render navigation on auth pages
+    const isAuthPage = pathname?.startsWith('/auth/');
+    if (isAuthPage) {
+        return null; // Don't show navigation on auth pages
     }
-  };
 
-  // Helper function to validate Ethereum address format
-  const isValidEthereumAddress = (address: string): boolean => {
-    return /^0x[a-fA-F0-9]{40}$/.test(address);
-  };
+    const handleSignOut = async () => {
+        await signOut({ redirect: false });
+        router.push('/auth/signin');
+    };
 
-  // Show loading state while checking auth
-  if (status === 'loading') {
+    const isActive = (path: string) => {
+        return pathname === path;
+    };
+
     return (
-      <div className="min-h-screen bg-gradient-to-b from-[#2e026d] to-[#15162c] p-6 flex items-center justify-center">
-        <div className="text-white text-xl">Loading...</div>
-      </div>
-    );
-  }
-
-  return (
-    <div className="min-h-screen bg-gradient-to-b from-[#2e026d] to-[#15162c] p-6">
-      <div className="max-w-4xl mx-auto bg-white/10 rounded-lg p-8 backdrop-blur-lg text-white">
-        <h1 className="text-3xl font-bold mb-6">Wallet Interaction Analyzer</h1>
-        
-        <div className="mb-8">
-          <p className="text-gray-300 mb-4">
-            Check if two blockchain wallets have directly interacted with each other through transactions.
-          </p>
-          
-          <form onSubmit={checkInteractions} className="space-y-6">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              <div>
-                <label htmlFor="walletA" className="block text-sm font-medium text-gray-200 mb-1">
-                  Wallet Address A
-                </label>
-                <input
-                  id="walletA"
-                  type="text"
-                  value={walletA}
-                  onChange={(e) => setWalletA(e.target.value)}
-                  placeholder="0x..."
-                  className="w-full px-4 py-2 bg-white/5 border border-gray-600 rounded-md text-white placeholder-gray-400"
-                  required
-                />
-              </div>
-              
-              <div>
-                <label htmlFor="walletB" className="block text-sm font-medium text-gray-200 mb-1">
-                  Wallet Address B
-                </label>
-                <input
-                  id="walletB"
-                  type="text"
-                  value={walletB}
-                  onChange={(e) => setWalletB(e.target.value)}
-                  placeholder="0x..."
-                  className="w-full px-4 py-2 bg-white/5 border border-gray-600 rounded-md text-white placeholder-gray-400"
-                  required
-                />
-              </div>
-            </div>
-            
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              <div>
-                <label htmlFor="network" className="block text-sm font-medium text-gray-200 mb-1">
-                  Network
-                </label>
-                <select
-                  id="network"
-                  value={network}
-                  onChange={(e) => setNetwork(e.target.value)}
-                  className="w-full px-4 py-2 bg-white/5 border border-gray-600 rounded-md text-white"
-                >
-                  <option value="all">All Networks</option>
-                  <option value="ethereum">Ethereum</option>
-                  <option value="polygon">Polygon</option>
-                  <option value="arbitrum">Arbitrum</option>
-                  <option value="optimism">Optimism</option>
-                  <option value="bsc">Binance Smart Chain</option>
-                </select>
-              </div>
-              
-              <div>
-                <label htmlFor="timeframe" className="block text-sm font-medium text-gray-200 mb-1">
-                  Timeframe
-                </label>
-                <select
-                  id="timeframe"
-                  value={timeframe}
-                  onChange={(e) => setTimeframe(e.target.value)}
-                  className="w-full px-4 py-2 bg-white/5 border border-gray-600 rounded-md text-white"
-                >
-                  <option value="all">All Time</option>
-                  <option value="day">Last 24 Hours</option>
-                  <option value="week">Last 7 Days</option>
-                  <option value="month">Last 30 Days</option>
-                  <option value="year">Last Year</option>
-                </select>
-              </div>
-            </div>
-            
-            <div>
-              <button
-                type="submit"
-                disabled={isLoading}
-                className="w-full px-4 py-3 bg-indigo-600 hover:bg-indigo-700 rounded-md text-white font-medium transition-colors disabled:bg-indigo-800 disabled:cursor-not-allowed"
-              >
-                {isLoading ? 'Analyzing...' : 'Check Interactions'}
-              </button>
-            </div>
-          </form>
-        </div>
-        
-        {error && (
-          <div className="mb-8 p-4 bg-red-500/20 border border-red-500/50 rounded-md">
-            <p className="text-red-200">{error}</p>
-          </div>
-        )}
-        
-        {results !== null && (
-          <div className="mt-8">
-            <h2 className="text-2xl font-bold mb-4">Analysis Results</h2>
-            
-            {results.length === 0 ? (
-              <div className="p-4 bg-gray-800 rounded-md">
-                <p className="text-gray-300">No direct interactions found between these wallets.</p>
-              </div>
-            ) : (
-              <div>
-                <p className="mb-4 text-green-300">
-                  Found {results.length} direct interaction{results.length !== 1 ? 's' : ''} between these wallets.
-                </p>
-                
-                <div className="overflow-x-auto">
-                  <table className="w-full border-collapse">
-                    <thead>
-                      <tr className="bg-gray-800 text-left">
-                        <th className="p-3 border-b border-gray-700">From</th>
-                        <th className="p-3 border-b border-gray-700">To</th>
-                        <th className="p-3 border-b border-gray-700">Time</th>
-                        <th className="p-3 border-b border-gray-700">Value</th>
-                        <th className="p-3 border-b border-gray-700">Network</th>
-                        <th className="p-3 border-b border-gray-700">Transaction</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {results.map((interaction, index) => (
-                        <tr key={index} className="hover:bg-gray-800/50">
-                          <td className="p-3 border-b border-gray-700">
-                            <span className="text-xs md:text-sm font-mono">
-                              {interaction.from.substring(0, 6)}...{interaction.from.substring(38)}
+        <nav className="bg-gray-900 text-white border-b border-gray-800">
+            <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+                <div className="flex justify-between h-16">
+                    <div className="flex items-center">
+                        <Link href="/" className="flex-shrink-0 flex items-center">
+                            <span className="text-xl font-bold bg-gradient-to-r from-purple-400 to-indigo-500 text-transparent bg-clip-text">
+                                Drexfy DeFi
                             </span>
-                          </td>
-                          <td className="p-3 border-b border-gray-700">
-                            <span className="text-xs md:text-sm font-mono">
-                              {interaction.to.substring(0, 6)}...{interaction.to.substring(38)}
-                            </span>
-                          </td>
-                          <td className="p-3 border-b border-gray-700">
-                            {new Date(interaction.timestamp).toLocaleDateString()}
-                          </td>
-                          <td className="p-3 border-b border-gray-700">{interaction.value}</td>
-                          <td className="p-3 border-b border-gray-700">{interaction.network}</td>
-                          <td className="p-3 border-b border-gray-700">
-                            <a
-                              href={`https://etherscan.io/tx/${interaction.txHash}`}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="text-indigo-400 hover:text-indigo-300 underline text-xs md:text-sm font-mono"
+                        </Link>
+                        
+                        {isAuthenticated && (
+                            <div className="hidden md:ml-10 md:flex md:space-x-8">
+                                <Link 
+                                    href="/dashboard" 
+                                    className={`inline-flex items-center px-1 pt-1 border-b-2 text-sm font-medium ${
+                                        isActive('/dashboard') 
+                                            ? 'border-indigo-500 text-white' 
+                                            : 'border-transparent text-gray-300 hover:border-gray-300 hover:text-gray-200'
+                                    }`}
+                                >
+                                    Dashboard
+                                </Link>
+                                
+                                <Link 
+                                    href="/wallet-analyzer" 
+                                    className={`inline-flex items-center px-1 pt-1 border-b-2 text-sm font-medium ${
+                                        isActive('/wallet-analyzer') 
+                                            ? 'border-indigo-500 text-white' 
+                                            : 'border-transparent text-gray-300 hover:border-gray-300 hover:text-gray-200'
+                                    }`}
+                                >
+                                    Wallet Analyzer
+                                </Link>
+                                
+                                <Link 
+                                    href="/transaction-history" 
+                                    className={`inline-flex items-center px-1 pt-1 border-b-2 text-sm font-medium ${
+                                        isActive('/transaction-history') 
+                                            ? 'border-indigo-500 text-white' 
+                                            : 'border-transparent text-gray-300 hover:border-gray-300 hover:text-gray-200'
+                                    }`}
+                                >
+                                    Transactions
+                                </Link>
+                                
+                                <Link 
+                                    href="/token-balances" 
+                                    className={`inline-flex items-center px-1 pt-1 border-b-2 text-sm font-medium ${
+                                        isActive('/token-balances') 
+                                            ? 'border-indigo-500 text-white' 
+                                            : 'border-transparent text-gray-300 hover:border-gray-300 hover:text-gray-200'
+                                    }`}
+                                >
+                                    Tokens
+                                </Link>
+                            </div>
+                        )}
+                    </div>
+                    
+                    <div className="flex items-center">
+                        {isAuthenticated ? (
+                            <div className="hidden md:flex items-center ml-4 md:ml-6">
+                                <span className="text-sm text-gray-300 mr-4">
+                                    {session?.user?.email}
+                                </span>
+                                <button 
+                                    onClick={handleSignOut}
+                                    className="px-3 py-2 text-sm rounded-md bg-indigo-600 hover:bg-indigo-700 transition-colors"
+                                >
+                                    Sign Out
+                                </button>
+                            </div>
+                        ) : (
+                            <div className="hidden md:flex">
+                                <Link 
+                                    href="/auth/signin"
+                                    className="px-3 py-2 text-sm rounded-md bg-indigo-600 hover:bg-indigo-700 transition-colors"
+                                >
+                                    Sign In
+                                </Link>
+                            </div>
+                        )}
+                        
+                        {/* Mobile menu button */}
+                        <div className="flex items-center md:hidden">
+                            <button
+                                onClick={() => setIsMenuOpen(!isMenuOpen)}
+                                className="inline-flex items-center justify-center p-2 rounded-md text-gray-400 hover:text-white hover:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-white"
                             >
-                              {interaction.txHash.substring(0, 6)}...{interaction.txHash.substring(60)}
-                            </a>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
+                                <span className="sr-only">Open main menu</span>
+                                {isMenuOpen ? (
+                                    <svg className="block h-6 w-6" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" />
+                                    </svg>
+                                ) : (
+                                    <svg className="block h-6 w-6" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 6h16M4 12h16M4 18h16" />
+                                    </svg>
+                                )}
+                            </button>
+                        </div>
+                    </div>
                 </div>
-              </div>
-            )}
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
+            </div>
+
+            {/* Mobile menu, show/hide based on menu state */}
+            <div className={`${isMenuOpen ? 'block' : 'hidden'} md:hidden`}>
+                {isAuthenticated && (
+                    <div className="px-2 pt-2 pb-3 space-y-1">
+                        <Link 
+                            href="/dashboard" 
+                            className={`block px-3 py-2 rounded-md text-base font-medium ${
+                                isActive('/dashboard') 
+                                    ? 'bg-gray-800 text-white' 
+                                    : 'text-gray-300 hover:bg-gray-700 hover:text-white'
+                            }`}
+                        >
+                            Dashboard
+                        </Link>
+                        
+                        <Link 
+                            href="/wallet-analyzer" 
+                            className={`block px-3 py-2 rounded-md text-base font-medium ${
+                                isActive('/wallet-analyzer') 
+                                    ? 'bg-gray-800 text-white' 
+                                    : 'text-gray-300 hover:bg-gray-700 hover:text-white'
+                            }`}
+                        >
+                            Wallet Analyzer
+                        </Link>
+                        
+                        <Link 
+                            href="/transaction-history" 
+                            className={`block px-3 py-2 rounded-md text-base font-medium ${
+                                isActive('/transaction-history') 
+                                    ? 'bg-gray-800 text-white' 
+                                    : 'text-gray-300 hover:bg-gray-700 hover:text-white'
+                            }`}
+                        >
+                            Transactions
+                        </Link>
+                        
+                        <Link 
+                            href="/token-balances" 
+                            className={`block px-3 py-2 rounded-md text-base font-medium ${
+                                isActive('/token-balances') 
+                                    ? 'bg-gray-800 text-white' 
+                                    : 'text-gray-300 hover:bg-gray-700 hover:text-white'
+                            }`}
+                        >
+                            Tokens
+                        </Link>
+                    </div>
+                )}
+                
+                <div className="pt-4 pb-3 border-t border-gray-700">
+                    {isAuthenticated ? (
+                        <div className="px-2 space-y-1">
+                            <div className="px-3 py-2 text-base font-medium text-gray-400">
+                                {session?.user?.email}
+                            </div>
+                            <button
+                                onClick={handleSignOut}
+                                className="block w-full text-left px-3 py-2 rounded-md text-base font-medium text-gray-300 hover:bg-gray-700 hover:text-white"
+                            >
+                                Sign Out
+                            </button>
+                        </div>
+                    ) : (
+                        <div className="px-2">
+                            <Link 
+                                href="/auth/signin"
+                                className="block px-3 py-2 rounded-md text-base font-medium text-gray-300 hover:bg-gray-700 hover:text-white"
+                            >
+                                Sign In
+                            </Link>
+                        </div>
+                    )}
+                </div>
+            </div>
+        </nav>
+    );
+};
+
+export default Navigation;

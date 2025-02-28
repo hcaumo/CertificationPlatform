@@ -25,13 +25,14 @@ export default function SignInPage() {
       const result = await signIn("email", {
         email,
         redirect: false,
+        callbackUrl: "/dashboard",
       });
       
       if (result?.error) {
         setError(result.error);
       } else if (result?.ok) {
-        // Show a success message
-        router.push("/dashboard");
+        // Redirecting will happen via the callbackUrl parameter
+        router.push("/auth/verify-request");
       }
     } catch (err) {
       console.error("Authentication error:", err);
