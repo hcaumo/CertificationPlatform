@@ -4,16 +4,19 @@ import ReactFlow, {
   Background,
   Controls,
   MiniMap,
-  MarkerType
+  MarkerType,
+  Node,
+  Edge,
+  NodeMouseHandler,
+  EdgeMouseHandler,
+  BackgroundVariant
 } from 'reactflow';
 import 'reactflow/dist/style.css';
 import { useCallback, useMemo } from 'react';
-import { ethers } from 'ethers';
-
-// Interface for transaction type
+// Type for our transaction
 interface Transaction {
   txHash: string;
-  hash?: string;
+  hash: string;
   from: string;
   to: string;
   value: string;
@@ -30,12 +33,163 @@ interface Transaction {
 interface TransactionGraphProps {
   wallets: string[];
   transactions: Transaction[];
-  onNodeClick?: (address: string, network: string) => void;
-  onEdgeClick?: (transaction: Transaction) => void;
+  onNodeClick: (address: string, network: string) => void;
+  onEdgeClick: (tx: Transaction) => void;
 }
 
-// Helper function to get color for a network
-const getNetworkColor = (network: string): string => {
+const TransactionGraph = ({ wallets, transactions, onNodeClick, onEdgeClick }: TransactionGraphProps) => {
+  // Create nodes from wallet addresses
+  const nodes = useMemo(() => 
+    wallets
+      .filter(wallet => wallet.trim() !== '')
+      .map((wallet, index) => ({
+        id: wallet.toLowerCase(),
+        data: { 
+          label: `Wallet ${index + 1}`,
+          address: wallet 
+        },
+        position: { 
+          x: 250 * (index - (wallets.length - 1) / 2), 
+          y: 100 
+        },
+        style: {
+          background: '#1a1a1a',
+          color: '#fff',
+          border: '1px solid #646cff',
+          borderRadius: '8px',
+          padding: '10px',
+          width: 180,
+        }
+      })),
+    [wallets]
+  );
+
+  // Create edges from transactions
+  const edges = useMemo(() => {
+    // Create a map to group transactions between the same wallets
+    const edgesMap = new Map();
+    
+    // Process each transaction
+    transactions.forEach(tx => {
+      // Make sure both wallets are in our list
+      const fromWallet = wallets.find(w => w.toLowerCase() === tx.from.toLowerCase());
+      const toWallet = wallets.find(w => w.toLowerCase() === tx.to?.toLowerCase());
+      
+      if (fromWallet && toWallet) {
+        // Create a unique key for this wallet pair
+        const edgeKey = `${tx.from.toLowerCase()}-${tx.to.toLowerCase()}`;
+        
+        // See if we already have an edge for this wallet pair
+        if (edgesMap.has(edgeKey)) {
+          // Update existing edge
+          const edge = edgesMap.get(edgeKey);
+          edge.data.transactions.push(tx);
+          
+          // Try to update the total value (might fail if not valid numbers)
+          try {
+            const currentValue = BigInt(edge.data.totalValue);
+            const newValue = BigInt(tx.value);
+            edge.data.totalValue = (currentValue + newValue).toString();
+          } catch (e) {
+            // Just keep the original value if we can't add them
+            console.log("Couldn't add transaction values:", e);
+          }
+        } else {
+          // Create a new edge
+          edgesMap.set(edgeKey, {
+            id: edgeKey,
+            source: tx.from.toLowerCase(),
+            target: tx.to.toLowerCase(),
+            type: 'smoothstep',
+            animated: true,
+            style: { 
+              stroke: getNetworkColor(tx.network) 
+            },
+            markerEnd: {
+              type: MarkerType.ArrowClosed,
+              color: getNetworkColor(tx.network),
+            },
+            data: {
+              // Store the full transaction objects
+              transactions: [tx],
+              totalValue: tx.value,
+              network: tx.network
+            },
+            // Format a label showing the value
+            label: formatEtherValue(tx.value)
+          });
+        }
+      }
+    });
+    
+    // Convert the map to an array and update the labels with total values
+    return Array.from(edgesMap.values()).map(edge => ({
+      ...edge,
+      label: formatEtherValue(edge.data.totalValue)
+    }));
+  }, [transactions, wallets]);
+
+  // Handle clicking on a node (wallet)
+  const handleNodeClick: NodeMouseHandler = useCallback((e, node) => {
+    console.log("Node clicked:", node);
+    onNodeClick(node.data.address, node.data.network || 'ethereum');
+  }, [onNodeClick]);
+
+  // Handle clicking on an edge (transaction)
+  const handleEdgeClick: EdgeMouseHandler = useCallback((e, edge) => {
+    console.log("Edge clicked:", edge);
+    
+    // Make sure we have transaction data
+    if (!edge?.data?.transactions?.length) {
+      console.error("No transactions in edge:", edge);
+      return;
+    }
+    
+    // Get the first transaction from the edge
+    const tx = edge.data.transactions[0];
+    console.log("Transaction from edge:", tx);
+    
+    // Call the callback with the transaction
+    onEdgeClick(tx);
+  }, [onEdgeClick]);
+
+  return (
+    <div style={{ height: 400, background: '#0a0a0a', borderRadius: '12px' }}>
+      <ReactFlow
+        nodes={nodes}
+        edges={edges}
+        onNodeClick={handleNodeClick}
+        onEdgeClick={handleEdgeClick}
+        fitView
+      >
+        <Background color="#333" variant={BackgroundVariant.Dots} />
+        <Controls />
+        <MiniMap style={{ background: '#1a1a1a' }} nodeColor="#646cff" />
+      </ReactFlow>
+    </div>
+  );
+};
+
+// Helper function to format ETH values
+function formatEtherValue(value: string): string {
+  try {
+    // Convert string to BigInt and handle the division
+    const valueBigInt = BigInt(value);
+    const divisor = BigInt(10 ** 18); // 1e18 as BigInt
+    const quotient = valueBigInt / divisor;
+    const remainder = valueBigInt % divisor;
+    
+    // Format the decimal part (first 4 digits)
+    const decimalStr = remainder.toString().padStart(18, '0').slice(0, 4);
+    
+    return `${quotient}.${decimalStr} ETH`;
+  } catch (e) {
+    return "0.0000 ETH";
+  }
+}
+
+// Helper function to get color for different networks
+function getNetworkColor(network: string): string {
   const networkColors: Record<string, string> = {
     ethereum: '#646cff',
     bsc: '#F0B90B',
@@ -50,174 +204,6 @@ const getNetworkColor = (network: string): string => {
   };
   
   return networkColors[network] || '#646cff';
-};
-
-// Helper function to format ETH values
-const formatEtherValue = (value: string): string => {
-  try {
-    return `${ethers.formatEther(value).slice(0, 6)} ETH`;
-  } catch (e) {
-    return "0.0000 ETH";
-  }
-};
-
-const TransactionGraph = ({ wallets, transactions, onNodeClick, onEdgeClick }: TransactionGraphProps) => {
-  const nodes = useMemo(() =>
-    wallets
-      .filter(wallet => wallet.trim() !== '')
-      .map((wallet, index) => ({
-        id: wallet.toLowerCase(),
-        data: {
-          label: `Wallet ${index + 1}`,
-          address: wallet
-        },
-        position: {
-          x: 250 * (index - (wallets.length - 1) / 2),
-          y: 100
-        },
-        style: {
-          background: '#1a1a1a',
-          color: '#fff',
-          border: '1px solid #646cff',
-          borderRadius: '8px',
-          padding: '10px',
-          width: 180,
-        }
-      })),
-    [wallets]
-  );
-
-  // Store a reference map to the original transaction objects
-  const transactionMap = useMemo(() => {
-    const map = new Map<string, Transaction>();
-    transactions.forEach(tx => {
-      map.set(tx.txHash, tx);
-    });
-    return map;
-  }, [transactions]);
-
-  const edges = useMemo(() => {
-    const edgeMap = new Map();
-    
-    transactions.forEach(tx => {
-      const fromWallet = wallets.find(w => w.toLowerCase() === tx.from.toLowerCase());
-      const toWallet = wallets.find(w => w.toLowerCase() === tx.to?.toLowerCase());
-      
-      if (fromWallet && toWallet) {
-        const edgeId = `${tx.from.toLowerCase()}-${tx.to.toLowerCase()}`;
-        const existingEdge = edgeMap.get(edgeId);
-        
-        if (existingEdge) {
-          let currentTotal;
-          let newValue;
-          
-          try {
-            currentTotal = BigInt(existingEdge.data.totalValue);
-            newValue = BigInt(tx.value);
-            existingEdge.data.transactionHashes.push(tx.txHash); // Store only the hash reference
-            existingEdge.data.totalValue = (currentTotal + newValue).toString();
-          } catch (e) {
-            // Handle case where values might not be valid BigInts
-            existingEdge.data.transactionHashes.push(tx.txHash);
-          }
-        } else {
-          edgeMap.set(edgeId, {
-            id: edgeId,
-            source: tx.from.toLowerCase(),
-            target: tx.to.toLowerCase(),
-            type: 'smoothstep',
-            animated: true,
-            style: { stroke: getNetworkColor(tx.network) },
-            markerEnd: {
-              type: MarkerType.ArrowClosed,
-              color: getNetworkColor(tx.network),
-            },
-            data: {
-              transactionHashes: [tx.txHash], // Store only the hash references
-              totalValue: tx.value,
-              network: tx.network,
-              networkName: tx.networkName
-            },
-            label: formatEtherValue(tx.value),
-          });
-        }
-      }
-    });
-    
-    return Array.from(edgeMap.values()).map(edge => ({
-      ...edge,
-      label: formatEtherValue(edge.data.totalValue),
-    }));
-  }, [transactions, wallets]);
-
-  const handleNodeClick = useCallback((_, node) => {
-    if (onNodeClick) {
-      onNodeClick(node.data.address, 'ethereum'); // Default to ethereum
-    } else {
-      window.open(`https://etherscan.io/address/${node.data.address}`, '_blank');
-    }
-  }, [onNodeClick]);
-
-  const handleEdgeClick = useCallback((_, edge) => {
-    if (!edge?.data?.transactionHashes || edge.data.transactionHashes.length === 0) {
-      console.error("Edge missing transaction hashes", edge);
-      return;
-    }
-    
-    const txHash = edge.data.transactionHashes[0];
-    console.log("Transaction hash from edge:", txHash);
-    
-    // Find the full transaction object using the hash
-    const tx = transactionMap.get(txHash);
-    if (!tx) {
-      console.error("Could not find transaction with hash", txHash);
-      return;
-    }
-    
-    console.log("Full transaction object:", tx);
-    
-    if (onEdgeClick) {
-      onEdgeClick(tx);
-    } else {
-      // Get explorer URL for the network
-      const explorerUrls: Record<string, string> = {
-        ethereum: 'https://etherscan.io',
-        bsc: 'https://bscscan.com',
-        polygon: 'https://polygonscan.com',
-        base: 'https://basescan.org',
-        arbitrum: 'https://arbiscan.io',
-        moonbeam: 'https://moonbeam.moonscan.io',
-        optimism: 'https://optimistic.etherscan.io',
-        opbnb: 'https://opbnb.bscscan.com',
-        polygonzkevm: 'https://zkevm.polygonscan.com',
-        gnosis: 'https://gnosisscan.io'
-      };
-      
-      const baseUrl = explorerUrls[tx.network] || 'https://etherscan.io';
-      
-      // Use the full transaction hash for the URL
-      const txUrl = `${baseUrl}/tx/${txHash}`;
-      console.log("Opening transaction URL:", txUrl);
-      
-      window.open(txUrl, '_blank');
-    }
-  }, [onEdgeClick, transactionMap]);
-
-  return (
-    <div style={{ height: 400, background: '#0a0a0a', borderRadius: '12px' }}>
-      <ReactFlow
-        nodes={nodes}
-        edges={edges}
-        onNodeClick={handleNodeClick}
-        onEdgeClick={handleEdgeClick}
-        fitView
-      >
-        <Background color="#333" variant="dots" />
-        <Controls />
-        <MiniMap style={{ background: '#1a1a1a' }} nodeColor="#646cff" />
-      </ReactFlow>
-    </div>
-  );
-};
+}
 
 export default TransactionGraph;

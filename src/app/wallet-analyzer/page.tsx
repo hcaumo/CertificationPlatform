@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { useSession } from 'next-auth/react';
 import { redirect } from 'next/navigation';
 import dynamic from 'next/dynamic';
@@ -279,21 +279,23 @@ export default function WalletAnalyzerPage() {
       
       // Check if this transaction is between our wallets of interest
       if (walletSet.has(from) && to && walletSet.has(to)) {
-        interactions.push({
-          txHash: tx.hash,
-          hash: tx.hash, // Alias for compatibility with graph component
-          from: tx.from,
-          to: tx.to,
-          value: tx.value,
-          tokenSymbol: isTokenTx ? tx.tokenSymbol : undefined,
-          tokenName: isTokenTx ? tx.tokenName : undefined,
-          tokenDecimal: isTokenTx ? tx.tokenDecimal : undefined,
-          isToken: isTokenTx,
-          timestamp: parseInt(tx.timeStamp),
-          network: network.id,
-          networkName: network.name,
-          blockNumber: parseInt(tx.blockNumber)
-        });
+        if (tx.to) { // Only add if 'to' address exists
+          interactions.push({
+            txHash: tx.hash,
+            hash: tx.hash, // Alias for compatibility with graph component
+            from: tx.from,
+            to: tx.to,
+            value: tx.value,
+            tokenSymbol: isTokenTx ? tx.tokenSymbol : undefined,
+            tokenName: isTokenTx ? tx.tokenName : undefined,
+            tokenDecimal: isTokenTx ? tx.tokenDecimal : undefined,
+            isToken: isTokenTx,
+            timestamp: parseInt(tx.timeStamp),
+            network: network.id,
+            networkName: network.name,
+            blockNumber: parseInt(tx.blockNumber)
+          });
+        }
       }
     }
     
@@ -308,8 +310,22 @@ export default function WalletAnalyzerPage() {
   
   // Open block explorer for transaction
   const openTransactionExplorer = (tx: WalletInteraction) => {
+    console.log("Opening transaction explorer for:", tx);
+    
+    if (!tx || !tx.txHash) {
+      console.error("Missing transaction or hash:", tx);
+      return;
+    }
+    
+    // Get the block explorer URL for this network
     const explorerUrl = getExplorerUrl(tx.network);
-    window.open(`${explorerUrl}/tx/${tx.txHash}`, '_blank');
+    
+    // Construct the full URL to the transaction
+    const fullUrl = `${explorerUrl}/tx/${tx.txHash}`;
+    console.log("Opening transaction URL:", fullUrl);
+    
+    // Open in a new tab
+    window.open(fullUrl, '_blank');
   };
   
   // Get explorer URL for network
@@ -427,14 +443,19 @@ export default function WalletAnalyzerPage() {
     setAnalysisStats(null);
     setAnalysisError(null);
     
-    // Filter out invalid wallet addresses
-    const validAddresses = walletAddresses.filter(addr => isValidEVMAddress(addr));
+    // Filter out invalid and undefined wallet addresses
+    const validAddresses = walletAddresses
+      .filter((addr): addr is string => typeof addr === 'string' && addr.trim() !== '')
+      .filter(addr => isValidEVMAddress(addr));
     
     // Check if we have at least 2 valid addresses
     if (validAddresses.length < 2) {
       setAnalysisError("Please enter at least 2 valid Ethereum addresses");
       return;
     }
+
+    // Create a type-safe array of addresses
+    const safeAddresses: string[] = [...validAddresses];
     
     // Check if at least one network is selected
     if (selectedNetworks.length === 0) {
@@ -453,65 +474,78 @@ export default function WalletAnalyzerPage() {
       const networksToScan = blockchainNetworks.filter(n => selectedNetworks.includes(n.id));
       
       // Mock data generation for demo - this would be replaced by actual API calls
-      const generateMockInteraction = (from: string, to: string, network: typeof blockchainNetworks[0], timestamp: number, isToken = false) => ({
-        txHash: `0x${Math.random().toString(16).substring(2, 10)}${Math.random().toString(16).substring(2, 58)}`,
-        hash: `0x${Math.random().toString(16).substring(2, 10)}${Math.random().toString(16).substring(2, 58)}`, // Alias for compatibility
-        from: from,
-        to: to,
-        value: (Math.random() * 10 * 1e18).toString(), // Convert to wei format for realistic values
-        tokenSymbol: isToken ? ['USDT', 'WETH', 'LINK', 'UNI', 'AAVE'][Math.floor(Math.random() * 5)] : undefined,
-        tokenName: isToken ? ['Tether', 'Wrapped Ether', 'Chainlink', 'Uniswap', 'Aave'][Math.floor(Math.random() * 5)] : undefined,
-        tokenDecimal: isToken ? '18' : undefined,
-        isToken: isToken,
-        timestamp: timestamp,
-        network: network.id,
-        networkName: network.name,
-        blockNumber: Math.floor(Math.random() * 1000000) + 1000000
-      });
+      const generateMockInteraction = (from: string, to: string, network: typeof blockchainNetworks[0], timestamp: number, isToken = false): WalletInteraction => {
+        // Generate a single consistent hash for the transaction
+        const txHash = `0x${Math.random().toString(16).substring(2, 10)}${Math.random().toString(16).substring(2, 58)}`;
+        
+        // Return a complete mock transaction object
+        return {
+          txHash: txHash,
+          hash: txHash, // Required for graph component compatibility
+          from: from,
+          to: to,
+          value: (Math.random() * 10 * 1e18).toString(), // Convert to wei format for realistic values
+          tokenSymbol: isToken ? ['USDT', 'WETH', 'LINK', 'UNI', 'AAVE'][Math.floor(Math.random() * 5)] : undefined,
+          tokenName: isToken ? ['Tether', 'Wrapped Ether', 'Chainlink', 'Uniswap', 'Aave'][Math.floor(Math.random() * 5)] : undefined,
+          tokenDecimal: isToken ? '18' : undefined,
+          isToken: isToken,
+          timestamp: timestamp,
+          network: network.id,
+          networkName: network.name,
+          blockNumber: Math.floor(Math.random() * 1000000) + 1000000
+        };
+      };
       
       for (const network of networksToScan.slice(0, 3)) { // Limit to first 3 networks to avoid rate limits
         // For the first wallet, try to actually fetch some transactions
         try {
-          const txns = await fetchTransactions(validAddresses[0], network);
-          totalTxnsScanned += txns.length;
-          
-          // Find real interactions if any
-          const realInteractions = findInteractions(txns, validAddresses, network);
-          allInteractions.push(...realInteractions);
-          
-          // Fetch token transfers if requested
-          if (includeTokenTransfers) {
-            const tokenTxns = await fetchTokenTransfers(validAddresses[0], network);
-            totalTxnsScanned += tokenTxns.length;
+          if (validAddresses[0]) {
+            const txns = await fetchTransactions(validAddresses[0], network);
+            totalTxnsScanned += txns.length;
             
-            // Find token transfer interactions
-            const tokenInteractions = findInteractions(tokenTxns, validAddresses, network, true);
-            allInteractions.push(...tokenInteractions);
+            // Find real interactions if any
+            const realInteractions = findInteractions(txns, validAddresses.filter((addr): addr is string => !!addr), network);
+            allInteractions.push(...realInteractions);
+            
+            // Fetch token transfers if requested
+            if (includeTokenTransfers) {
+              const tokenTxns = await fetchTokenTransfers(validAddresses[0], network);
+              totalTxnsScanned += tokenTxns.length;
+              
+              // Find token transfer interactions
+              const tokenInteractions = findInteractions(tokenTxns, validAddresses.filter((addr): addr is string => !!addr), network, true);
+              allInteractions.push(...tokenInteractions);
+            }
           }
           
-          // If we don't find any real interactions, generate some mock ones for demo
-          if (realInteractions.length === 0 && validAddresses.length >= 2) {
-            // Create some mock interactions for demo purposes
-            for (let i = 0; i < 2; i++) {
-              const fromIndex = i % 2;
-              const toIndex = (i + 1) % 2;
-              
-              allInteractions.push(generateMockInteraction(
-                validAddresses[fromIndex],
-                validAddresses[toIndex],
-                network,
-                Math.floor(Date.now() / 1000) - i * 86400 // 1 day apart
-              ));
-              
-              // Add token transfers if requested
-              if (includeTokenTransfers) {
+          // Generate mock interactions for demo purposes
+          if (validAddresses.length >= 2) {
+            const addr1 = validAddresses[0];
+            const addr2 = validAddresses[1];
+            
+            if (addr1 && addr2) {
+              // Create some mock interactions for demo purposes
+              for (let i = 0; i < 2; i++) {
+                const fromAddr = i % 2 === 0 ? addr1 : addr2;
+                const toAddr = i % 2 === 0 ? addr2 : addr1;
+                
                 allInteractions.push(generateMockInteraction(
-                  validAddresses[fromIndex],
-                  validAddresses[toIndex],
+                  fromAddr,
+                  toAddr,
                   network,
-                  Math.floor(Date.now() / 1000) - i * 86400 - 3600, // 1 hour earlier
-                  true
+                  Math.floor(Date.now() / 1000) - i * 86400 // 1 day apart
                 ));
+                
+                // Add token transfers if requested
+                if (includeTokenTransfers) {
+                  allInteractions.push(generateMockInteraction(
+                    fromAddr,
+                    toAddr,
+                    network,
+                    Math.floor(Date.now() / 1000) - i * 86400 - 3600, // 1 hour earlier
+                    true
+                  ));
+                }
               }
             }
           }
@@ -522,19 +556,25 @@ export default function WalletAnalyzerPage() {
       
       // Add some more mock interactions for demo purposes
       for (const network of networksToScan.slice(3)) {
-        if (validAddresses.length >= 2) {
+        // Get the first two valid addresses
+        const [addr1, addr2] = validAddresses.filter((addr): addr is string => !!addr).slice(0, 2);
+        
+        if (addr1 && addr2) {
+          const baseTimestamp = Math.floor(Date.now() / 1000);
+          
+          // Generate regular transactions
           allInteractions.push(
             generateMockInteraction(
-              validAddresses[0],
-              validAddresses[1],
+              addr1,
+              addr2,
               network,
-              Math.floor(Date.now() / 1000) - Math.floor(Math.random() * 30) * 86400
+              baseTimestamp - Math.floor(Math.random() * 30) * 86400
             ),
             generateMockInteraction(
-              validAddresses[1],
-              validAddresses[0],
+              addr2,
+              addr1,
               network,
-              Math.floor(Date.now() / 1000) - Math.floor(Math.random() * 30) * 86400
+              baseTimestamp - Math.floor(Math.random() * 30) * 86400
             )
           );
           
@@ -542,17 +582,17 @@ export default function WalletAnalyzerPage() {
           if (includeTokenTransfers) {
             allInteractions.push(
               generateMockInteraction(
-                validAddresses[0],
-                validAddresses[1],
+                addr1,
+                addr2,
                 network,
-                Math.floor(Date.now() / 1000) - Math.floor(Math.random() * 30) * 86400 - 7200, // 2 hours earlier
+                baseTimestamp - Math.floor(Math.random() * 30) * 86400 - 7200, // 2 hours earlier
                 true
               ),
               generateMockInteraction(
-                validAddresses[1],
-                validAddresses[0],
+                addr2,
+                addr1,
                 network,
-                Math.floor(Date.now() / 1000) - Math.floor(Math.random() * 30) * 86400 - 7200, // 2 hours earlier
+                baseTimestamp - Math.floor(Math.random() * 30) * 86400 - 7200, // 2 hours earlier
                 true
               )
             );
@@ -562,23 +602,27 @@ export default function WalletAnalyzerPage() {
       }
       
       // If we have more than 2 addresses, create some additional interactions
-      if (validAddresses.length > 2) {
-        for (let i = 2; i < validAddresses.length; i++) {
-          const network = networksToScan[i % networksToScan.length];
+      const validAddressesFiltered = validAddresses.filter((addr): addr is string => !!addr);
+      if (validAddressesFiltered.length > 2) {
+        const [addr1, addr2, ...additionalAddrs] = validAddressesFiltered;
+        
+        for (const addr3 of additionalAddrs) {
+          const network = networksToScan[additionalAddrs.indexOf(addr3) % networksToScan.length];
+          const baseTimestamp = Math.floor(Date.now() / 1000);
           
           // Add interactions between this address and the first two
           allInteractions.push(
             generateMockInteraction(
-              validAddresses[i],
-              validAddresses[0],
+              addr3,
+              addr1,
               network,
-              Math.floor(Date.now() / 1000) - Math.floor(Math.random() * 30) * 86400
+              baseTimestamp - Math.floor(Math.random() * 30) * 86400
             ),
             generateMockInteraction(
-              validAddresses[1],
-              validAddresses[i],
+              addr2,
+              addr3,
               network,
-              Math.floor(Date.now() / 1000) - Math.floor(Math.random() * 30) * 86400
+              baseTimestamp - Math.floor(Math.random() * 30) * 86400
             )
           );
           
@@ -586,17 +630,17 @@ export default function WalletAnalyzerPage() {
           if (includeTokenTransfers) {
             allInteractions.push(
               generateMockInteraction(
-                validAddresses[i],
-                validAddresses[0],
+                addr3,
+                addr1,
                 network,
-                Math.floor(Date.now() / 1000) - Math.floor(Math.random() * 30) * 86400 - 3600,
+                baseTimestamp - Math.floor(Math.random() * 30) * 86400 - 3600,
                 true
               ),
               generateMockInteraction(
-                validAddresses[1],
-                validAddresses[i],
+                addr2,
+                addr3,
                 network,
-                Math.floor(Date.now() / 1000) - Math.floor(Math.random() * 30) * 86400 - 3600,
+                baseTimestamp - Math.floor(Math.random() * 30) * 86400 - 3600,
                 true
               )
             );
@@ -1103,22 +1147,6 @@ export default function WalletAnalyzerPage() {
     </div>
   );
 }
-const openTransactionExplorer = (tx: WalletInteraction) => {
-    // Make sure we have a complete transaction hash
-    if (!tx.txHash) {
-      console.error("Transaction missing hash", tx);
-      return;
-    }
-    
-    console.log("Opening transaction:", tx);
-    console.log("Complete transaction hash:", tx.txHash);
-    
-    const explorerUrl = getExplorerUrl(tx.network);
-    const fullUrl = `${explorerUrl}/tx/${tx.txHash}`;
-    
-    console.log("Opening URL:", fullUrl);
-    window.open(fullUrl, '_blank');
-  };
 
 // Helper function to get color for different networks
 function getNetworkColor(network: string): string {
