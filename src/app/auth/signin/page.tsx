@@ -1,7 +1,7 @@
 "use client";
 
-import { useState } from "react";
-import { signIn } from "next-auth/react";
+import { useState, useEffect } from "react";
+import { signIn, useSession } from "next-auth/react";
 import { useRouter } from "next/navigation";
 
 export default function SignInPage() {
@@ -9,6 +9,14 @@ export default function SignInPage() {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState("");
   const router = useRouter();
+  const { status } = useSession();
+
+  // Redirect to dashboard if already authenticated
+  useEffect(() => {
+    if (status === 'authenticated') {
+      router.replace('/dashboard');
+    }
+  }, [status, router]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -31,7 +39,7 @@ export default function SignInPage() {
       if (result?.error) {
         setError(result.error);
       } else if (result?.ok) {
-        // Redirecting will happen via the callbackUrl parameter
+        // Navigate to verify request page
         router.push("/auth/verify-request");
       }
     } catch (err) {
@@ -41,6 +49,15 @@ export default function SignInPage() {
       setIsLoading(false);
     }
   };
+
+  // If still checking auth status, show loading
+  if (status === 'loading') {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-gradient-to-b from-[#2e026d] to-[#15162c]">
+        <div className="text-white text-xl">Loading...</div>
+      </div>
+    );
+  }
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-gradient-to-b from-[#2e026d] to-[#15162c]">
