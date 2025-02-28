@@ -12,12 +12,19 @@ import { ethers } from 'ethers';
 
 // Interface for transaction type
 interface Transaction {
-  hash: string;
+  txHash: string;
+  hash?: string;
   from: string;
   to: string;
   value: string;
+  tokenSymbol?: string;
+  tokenName?: string;
+  tokenDecimal?: string;
+  isToken?: boolean;
+  timestamp: number;
   network: string;
   networkName: string;
+  blockNumber: number;
 }
 
 interface TransactionGraphProps {
@@ -27,7 +34,7 @@ interface TransactionGraphProps {
   onEdgeClick?: (transaction: Transaction) => void;
 }
 
-// Helper function to get color for a network - MOVED UP BEFORE USAGE
+// Helper function to get color for a network
 const getNetworkColor = (network: string): string => {
   const networkColors: Record<string, string> = {
     ethereum: '#646cff',
@@ -43,24 +50,6 @@ const getNetworkColor = (network: string): string => {
   };
   
   return networkColors[network] || '#646cff';
-};
-
-// Helper function to get explorer URL for different networks
-const getExplorerUrl = (network: string): string => {
-  const explorerUrls: Record<string, string> = {
-    ethereum: 'https://etherscan.io',
-    bsc: 'https://bscscan.com',
-    polygon: 'https://polygonscan.com',
-    base: 'https://basescan.org',
-    arbitrum: 'https://arbiscan.io',
-    moonbeam: 'https://moonbeam.moonscan.io',
-    optimism: 'https://optimistic.etherscan.io',
-    opbnb: 'https://opbnb.bscscan.com',
-    polygonzkevm: 'https://zkevm.polygonscan.com',
-    gnosis: 'https://gnosisscan.io'
-  };
-  
-  return explorerUrls[network] || 'https://etherscan.io';
 };
 
 // Helper function to format ETH values
@@ -98,8 +87,18 @@ const TransactionGraph = ({ wallets, transactions, onNodeClick, onEdgeClick }: T
     [wallets]
   );
 
+  // Store a reference map to the original transaction objects
+  const transactionMap = useMemo(() => {
+    const map = new Map<string, Transaction>();
+    transactions.forEach(tx => {
+      map.set(tx.txHash, tx);
+    });
+    return map;
+  }, [transactions]);
+
   const edges = useMemo(() => {
     const edgeMap = new Map();
+    
     transactions.forEach(tx => {
       const fromWallet = wallets.find(w => w.toLowerCase() === tx.from.toLowerCase());
       const toWallet = wallets.find(w => w.toLowerCase() === tx.to?.toLowerCase());
@@ -115,11 +114,11 @@ const TransactionGraph = ({ wallets, transactions, onNodeClick, onEdgeClick }: T
           try {
             currentTotal = BigInt(existingEdge.data.totalValue);
             newValue = BigInt(tx.value);
-            existingEdge.data.transactions.push(tx);
+            existingEdge.data.transactionHashes.push(tx.txHash); // Store only the hash reference
             existingEdge.data.totalValue = (currentTotal + newValue).toString();
           } catch (e) {
             // Handle case where values might not be valid BigInts
-            existingEdge.data.transactions.push(tx);
+            existingEdge.data.transactionHashes.push(tx.txHash);
           }
         } else {
           edgeMap.set(edgeId, {
@@ -134,9 +133,10 @@ const TransactionGraph = ({ wallets, transactions, onNodeClick, onEdgeClick }: T
               color: getNetworkColor(tx.network),
             },
             data: {
-              transactions: [tx],
+              transactionHashes: [tx.txHash], // Store only the hash references
               totalValue: tx.value,
-              network: tx.network
+              network: tx.network,
+              networkName: tx.networkName
             },
             label: formatEtherValue(tx.value),
           });
@@ -159,15 +159,49 @@ const TransactionGraph = ({ wallets, transactions, onNodeClick, onEdgeClick }: T
   }, [onNodeClick]);
 
   const handleEdgeClick = useCallback((_, edge) => {
-    const tx = edge.data.transactions[0];
+    if (!edge?.data?.transactionHashes || edge.data.transactionHashes.length === 0) {
+      console.error("Edge missing transaction hashes", edge);
+      return;
+    }
+    
+    const txHash = edge.data.transactionHashes[0];
+    console.log("Transaction hash from edge:", txHash);
+    
+    // Find the full transaction object using the hash
+    const tx = transactionMap.get(txHash);
+    if (!tx) {
+      console.error("Could not find transaction with hash", txHash);
+      return;
+    }
+    
+    console.log("Full transaction object:", tx);
+    
     if (onEdgeClick) {
       onEdgeClick(tx);
     } else {
-      // Default behavior - open in appropriate block explorer
-      const baseUrl = getExplorerUrl(tx.network);
-      window.open(`${baseUrl}/tx/${tx.hash}`, '_blank');
+      // Get explorer URL for the network
+      const explorerUrls: Record<string, string> = {
+        ethereum: 'https://etherscan.io',
+        bsc: 'https://bscscan.com',
+        polygon: 'https://polygonscan.com',
+        base: 'https://basescan.org',
+        arbitrum: 'https://arbiscan.io',
+        moonbeam: 'https://moonbeam.moonscan.io',
+        optimism: 'https://optimistic.etherscan.io',
+        opbnb: 'https://opbnb.bscscan.com',
+        polygonzkevm: 'https://zkevm.polygonscan.com',
+        gnosis: 'https://gnosisscan.io'
+      };
+      
+      const baseUrl = explorerUrls[tx.network] || 'https://etherscan.io';
+      
+      // Use the full transaction hash for the URL
+      const txUrl = `${baseUrl}/tx/${txHash}`;
+      console.log("Opening transaction URL:", txUrl);
+      
+      window.open(txUrl, '_blank');
     }
-  }, [onEdgeClick]);
+  }, [onEdgeClick, transactionMap]);
 
   return (
     <div style={{ height: 400, background: '#0a0a0a', borderRadius: '12px' }}>

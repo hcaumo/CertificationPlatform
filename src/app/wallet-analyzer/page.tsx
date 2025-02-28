@@ -1103,6 +1103,22 @@ export default function WalletAnalyzerPage() {
     </div>
   );
 }
+const openTransactionExplorer = (tx: WalletInteraction) => {
+    // Make sure we have a complete transaction hash
+    if (!tx.txHash) {
+      console.error("Transaction missing hash", tx);
+      return;
+    }
+    
+    console.log("Opening transaction:", tx);
+    console.log("Complete transaction hash:", tx.txHash);
+    
+    const explorerUrl = getExplorerUrl(tx.network);
+    const fullUrl = `${explorerUrl}/tx/${tx.txHash}`;
+    
+    console.log("Opening URL:", fullUrl);
+    window.open(fullUrl, '_blank');
+  };
 
 // Helper function to get color for different networks
 function getNetworkColor(network: string): string {
