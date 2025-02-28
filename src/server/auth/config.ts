@@ -3,6 +3,7 @@ import EmailProvider from "next-auth/providers/email";
 import { DynamoDB } from "@aws-sdk/client-dynamodb";
 import { DynamoDBDocument } from "@aws-sdk/lib-dynamodb";
 import { DynamoDBAdapter } from "@auth/dynamodb-adapter";
+import { env } from "~/env";
 
 /**
  * Module augmentation for `next-auth` types. Allows us to add custom properties to the `session`
@@ -26,10 +27,10 @@ declare module "next-auth" {
 }
 
 const client = new DynamoDB({
-  region: process.env.AWS_REGION,
+  region: env.AWS_REGION,
   credentials: {
-    accessKeyId: process.env.AWS_ACCESS_KEY_ID!,
-    secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY!,
+    accessKeyId: env.AWS_ACCESS_KEY_ID,
+    secretAccessKey: env.AWS_SECRET_ACCESS_KEY,
   },
 });
 
@@ -42,21 +43,24 @@ const ddbDocClient = DynamoDBDocument.from(client);
  */
 export const authConfig = {
   adapter: DynamoDBAdapter(ddbDocClient, {
-    tableName: process.env.DYNAMODB_TABLE_NAME!,
+    tableName: env.DYNAMODB_TABLE_NAME,
     partitionKey: "pk",
     sortKey: "sk",
+    indexName: "GSI1",
+    indexPartitionKey: "GSI1PK",
+    indexSortKey: "GSI1SK",
   }),
   providers: [
     EmailProvider({
       server: {
-        host: process.env.EMAIL_SERVER_HOST,
-        port: Number(process.env.EMAIL_SERVER_PORT),
+        host: env.EMAIL_SERVER_HOST,
+        port: env.EMAIL_SERVER_PORT,
         auth: {
-          user: process.env.EMAIL_SERVER_USER,
-          pass: process.env.EMAIL_SERVER_PASSWORD,
+          user: env.EMAIL_SERVER_USER,
+          pass: env.EMAIL_SERVER_PASSWORD,
         },
       },
-      from: process.env.EMAIL_FROM,
+      from: env.EMAIL_FROM,
     }),
   ],
   callbacks: {
@@ -74,10 +78,17 @@ export const authConfig = {
       return token;
     },
   },
+  pages: {
+    signIn: '/auth/signin',
+    signOut: '/auth/signout',
+    error: '/auth/error',
+    verifyRequest: '/auth/verify-request',
+  },
   session: {
     strategy: "jwt",
     maxAge: 30 * 24 * 60 * 60, // 30 days
   },
-  secret: process.env.AUTH_SECRET,
+  secret: env.AUTH_SECRET,
   trustHost: true,
+  debug: process.env.NODE_ENV === "development",
 } satisfies NextAuthConfig;

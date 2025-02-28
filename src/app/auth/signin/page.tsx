@@ -1,27 +1,58 @@
-import { signIn, getCsrfToken } from "next-auth/react";
-import { type FormEvent } from "react";
+"use client";
 
-export default async function SignInPage() {
-  const csrfToken = await getCsrfToken();
+import { useState } from "react";
+import { signIn } from "next-auth/react";
+import { useRouter } from "next/navigation";
 
-  async function handleSubmit(e: FormEvent<HTMLFormElement>) {
+export default function SignInPage() {
+  const [email, setEmail] = useState("");
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState("");
+  const router = useRouter();
+
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    const formData = new FormData(e.currentTarget);
-    const email = formData.get("email") as string;
-
-    await signIn("email", {
-      email,
-      callbackUrl: "/",
-      csrfToken,
-    });
-  }
+    
+    if (!email) {
+      setError("Email is required");
+      return;
+    }
+    
+    try {
+      setIsLoading(true);
+      setError("");
+      
+      const result = await signIn("email", {
+        email,
+        redirect: false,
+      });
+      
+      if (result?.error) {
+        setError(result.error);
+      } else if (result?.ok) {
+        // Show a success message
+        router.push("/dashboard");
+      }
+    } catch (err) {
+      console.error("Authentication error:", err);
+      setError("An unexpected error occurred");
+    } finally {
+      setIsLoading(false);
+    }
+  };
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-gradient-to-b from-[#2e026d] to-[#15162c]">
       <div className="w-full max-w-md rounded-lg bg-white/10 p-8 backdrop-blur-lg">
         <h2 className="mb-6 text-center text-2xl font-bold text-white">Sign In</h2>
+        
+        {error && (
+          <div className="mb-4 rounded-md bg-red-500/20 p-3 text-center text-sm text-red-200">
+            {error}
+          </div>
+        )}
+        
         <form onSubmit={handleSubmit} className="space-y-4">
-          <input type="hidden" name="csrfToken" value={csrfToken} />
           <div>
             <label
               htmlFor="email"
@@ -32,18 +63,20 @@ export default async function SignInPage() {
             <input
               type="email"
               id="email"
-              name="email"
-              autoComplete="email"
-              required
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
               className="mt-1 block w-full rounded-md border border-gray-600 bg-white/5 px-3 py-2 text-white placeholder-gray-400 shadow-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
               placeholder="Enter your email"
+              disabled={isLoading}
+              required
             />
           </div>
           <button
             type="submit"
-            className="w-full rounded-md bg-indigo-600 px-4 py-2 text-white hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2"
+            disabled={isLoading}
+            className="w-full rounded-md bg-indigo-600 px-4 py-2 text-white hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 disabled:bg-indigo-400"
           >
-            Sign in with Email
+            {isLoading ? "Sending link..." : "Sign in with Email"}
           </button>
         </form>
       </div>
