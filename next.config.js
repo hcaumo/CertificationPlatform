@@ -5,6 +5,25 @@
 import "./src/env.js";
 
 /** @type {import("next").NextConfig} */
-const config = {};
+const config = {
+  // Allow all host headers to make it accessible from any network device
+  reactStrictMode: true,
+  
+  // Configure server behavior for network access
+  async headers() {
+    return [
+      {
+        // Apply these headers to all routes
+        source: '/:path*',
+        headers: [
+          {
+            key: 'Access-Control-Allow-Origin',
+            value: '*',
+          },
+        ],
+      },
+    ];
+  },
+};
 
 export default config;
