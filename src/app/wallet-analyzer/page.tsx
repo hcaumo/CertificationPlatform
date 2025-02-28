@@ -1,12 +1,11 @@
 "use client";
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useSession } from 'next-auth/react';
 import { redirect } from 'next/navigation';
 import dynamic from 'next/dynamic';
 
 // Dynamically import the TransactionGraph component with SSR disabled
-// This is necessary because ReactFlow uses browser APIs that aren't available during SSR
 const TransactionGraph = dynamic(() => import('./TransactionGraph'), { 
   ssr: false,
   loading: () => (
@@ -97,11 +96,21 @@ interface WalletInteraction {
   from: string;
   to: string;
   value: string;
+  tokenSymbol?: string;
+  tokenName?: string;
+  tokenDecimal?: string;
+  isToken?: boolean;
   timestamp: number;
   network: string;
   networkName: string;
   blockNumber: number;
 }
+
+// Sort direction type
+type SortDirection = 'asc' | 'desc';
+
+// Sort field type
+type SortField = 'network' | 'from' | 'to' | 'date' | 'value';
 
 export default function WalletAnalyzerPage() {
   const { data: session, status } = useSession({
@@ -130,6 +139,18 @@ export default function WalletAnalyzerPage() {
   
   // State for active view tab
   const [activeTab, setActiveTab] = useState<'table' | 'graph' | 'timeline'>('table');
+
+  // State for token transfers
+  const [includeTokenTransfers, setIncludeTokenTransfers] = useState(false);
+
+  // State for filtering and sorting
+  const [filterNetwork, setFilterNetwork] = useState<string>('');
+  const [filterFrom, setFilterFrom] = useState<string>('');
+  const [filterTo, setFilterTo] = useState<string>('');
+  const [filterDateStart, setFilterDateStart] = useState<string>('');
+  const [filterDateEnd, setFilterDateEnd] = useState<string>('');
+  const [sortField, setSortField] = useState<SortField>('date');
+  const [sortDirection, setSortDirection] = useState<SortDirection>('desc');
 
   // Show loading state while checking auth
   if (status === 'loading') {
@@ -224,9 +245,31 @@ export default function WalletAnalyzerPage() {
       return [];
     }
   };
+
+  // Function to fetch token transfers for a wallet
+  const fetchTokenTransfers = async (address: string, network: typeof blockchainNetworks[0]) => {
+    try {
+      // Construct API URL for token transfers (ERC20)
+      const url = `${network.apiUrl}?module=account&action=tokentx&address=${address}&startblock=0&endblock=99999999&sort=desc&apikey=${network.apiKey}`;
+      
+      // Make API request
+      const response = await fetch(url);
+      const data = await response.json();
+      
+      if (data.status === '1') {
+        return data.result || [];
+      } else {
+        console.warn(`API error for token transfers on ${network.name}: ${data.message}`);
+        return [];
+      }
+    } catch (error) {
+      console.error(`Error fetching token transfers for ${address} on ${network.name}:`, error);
+      return [];
+    }
+  };
   
   // Function to find interactions between wallets
-  const findInteractions = (transactions: any[], wallets: string[], network: typeof blockchainNetworks[0]) => {
+  const findInteractions = (transactions: any[], wallets: string[], network: typeof blockchainNetworks[0], isTokenTx = false) => {
     const walletSet = new Set(wallets.map(w => w.toLowerCase()));
     const interactions: WalletInteraction[] = [];
     
@@ -242,6 +285,10 @@ export default function WalletAnalyzerPage() {
           from: tx.from,
           to: tx.to,
           value: tx.value,
+          tokenSymbol: isTokenTx ? tx.tokenSymbol : undefined,
+          tokenName: isTokenTx ? tx.tokenName : undefined,
+          tokenDecimal: isTokenTx ? tx.tokenDecimal : undefined,
+          isToken: isTokenTx,
           timestamp: parseInt(tx.timeStamp),
           network: network.id,
           networkName: network.name,
@@ -282,6 +329,94 @@ export default function WalletAnalyzerPage() {
     
     return explorerUrls[networkId] || 'https://etherscan.io';
   };
+
+  // Handle sorting change
+  const handleSortChange = (field: SortField) => {
+    if (sortField === field) {
+      // Toggle direction if clicking the same field
+      setSortDirection(sortDirection === 'asc' ? 'desc' : 'asc');
+    } else {
+      // Set new field and default to ascending
+      setSortField(field);
+      setSortDirection('asc');
+    }
+  };
+
+  // Get sorted and filtered interactions
+  const getSortedAndFilteredInteractions = () => {
+    return interactions
+      .filter(tx => {
+        // Apply network filter
+        if (filterNetwork && tx.network !== filterNetwork) {
+          return false;
+        }
+        
+        // Apply from address filter
+        if (filterFrom && !tx.from.toLowerCase().includes(filterFrom.toLowerCase())) {
+          return false;
+        }
+        
+        // Apply to address filter
+        if (filterTo && !tx.to.toLowerCase().includes(filterTo.toLowerCase())) {
+          return false;
+        }
+        
+        // Apply date filter (start)
+        if (filterDateStart) {
+          const startTimestamp = new Date(filterDateStart).getTime() / 1000;
+          if (tx.timestamp < startTimestamp) {
+            return false;
+          }
+        }
+        
+        // Apply date filter (end)
+        if (filterDateEnd) {
+          const endTimestamp = new Date(filterDateEnd).getTime() / 1000 + 86399; // End of day
+          if (tx.timestamp > endTimestamp) {
+            return false;
+          }
+        }
+        
+        // Filter token transfers if not included
+        if (!includeTokenTransfers && tx.isToken) {
+          return false;
+        }
+        
+        return true;
+      })
+      .sort((a, b) => {
+        // Apply sorting
+        if (sortField === 'network') {
+          return sortDirection === 'asc' 
+            ? a.networkName.localeCompare(b.networkName)
+            : b.networkName.localeCompare(a.networkName);
+        } else if (sortField === 'from') {
+          return sortDirection === 'asc'
+            ? a.from.localeCompare(b.from)
+            : b.from.localeCompare(a.from);
+        } else if (sortField === 'to') {
+          return sortDirection === 'asc'
+            ? a.to.localeCompare(b.to)
+            : b.to.localeCompare(a.to);
+        } else if (sortField === 'date') {
+          return sortDirection === 'asc'
+            ? a.timestamp - b.timestamp
+            : b.timestamp - a.timestamp;
+        } else if (sortField === 'value') {
+          try {
+            const valueA = BigInt(a.value);
+            const valueB = BigInt(b.value);
+            return sortDirection === 'asc'
+              ? valueA > valueB ? 1 : -1
+              : valueB > valueA ? 1 : -1;
+          } catch (e) {
+            return 0;
+          }
+        }
+        
+        return 0;
+      });
+  };
   
   // Handle form submission
   const handleAnalyzeWallets = async (e: React.FormEvent) => {
@@ -310,8 +445,6 @@ export default function WalletAnalyzerPage() {
     setIsAnalyzing(true);
     
     // For demo purposes, let's use a mix of actual API calls and simulated data
-    // In a production app, you'd query all the APIs and analyze the data
-    
     try {
       const allInteractions: WalletInteraction[] = [];
       let totalTxnsScanned = 0;
@@ -319,24 +452,22 @@ export default function WalletAnalyzerPage() {
       // Get the relevant networks
       const networksToScan = blockchainNetworks.filter(n => selectedNetworks.includes(n.id));
       
-      // For demo purposes, we'll simulate some API calls and include actual ones with low rate limits
-      // In a real app, you'd run all these in sequence or with proper rate limiting
-      
       // Mock data generation for demo - this would be replaced by actual API calls
-      const generateMockInteraction = (from: string, to: string, network: typeof blockchainNetworks[0], timestamp: number) => ({
+      const generateMockInteraction = (from: string, to: string, network: typeof blockchainNetworks[0], timestamp: number, isToken = false) => ({
         txHash: `0x${Math.random().toString(16).substring(2, 10)}${Math.random().toString(16).substring(2, 58)}`,
         hash: `0x${Math.random().toString(16).substring(2, 10)}${Math.random().toString(16).substring(2, 58)}`, // Alias for compatibility
         from: from,
         to: to,
         value: (Math.random() * 10 * 1e18).toString(), // Convert to wei format for realistic values
+        tokenSymbol: isToken ? ['USDT', 'WETH', 'LINK', 'UNI', 'AAVE'][Math.floor(Math.random() * 5)] : undefined,
+        tokenName: isToken ? ['Tether', 'Wrapped Ether', 'Chainlink', 'Uniswap', 'Aave'][Math.floor(Math.random() * 5)] : undefined,
+        tokenDecimal: isToken ? '18' : undefined,
+        isToken: isToken,
         timestamp: timestamp,
         network: network.id,
         networkName: network.name,
         blockNumber: Math.floor(Math.random() * 1000000) + 1000000
       });
-      
-      // In a real app, you'd loop through all networks and wallets and make API calls
-      // Here we'll do a simplified version for demonstration
       
       for (const network of networksToScan.slice(0, 3)) { // Limit to first 3 networks to avoid rate limits
         // For the first wallet, try to actually fetch some transactions
@@ -347,6 +478,16 @@ export default function WalletAnalyzerPage() {
           // Find real interactions if any
           const realInteractions = findInteractions(txns, validAddresses, network);
           allInteractions.push(...realInteractions);
+          
+          // Fetch token transfers if requested
+          if (includeTokenTransfers) {
+            const tokenTxns = await fetchTokenTransfers(validAddresses[0], network);
+            totalTxnsScanned += tokenTxns.length;
+            
+            // Find token transfer interactions
+            const tokenInteractions = findInteractions(tokenTxns, validAddresses, network, true);
+            allInteractions.push(...tokenInteractions);
+          }
           
           // If we don't find any real interactions, generate some mock ones for demo
           if (realInteractions.length === 0 && validAddresses.length >= 2) {
@@ -361,6 +502,17 @@ export default function WalletAnalyzerPage() {
                 network,
                 Math.floor(Date.now() / 1000) - i * 86400 // 1 day apart
               ));
+              
+              // Add token transfers if requested
+              if (includeTokenTransfers) {
+                allInteractions.push(generateMockInteraction(
+                  validAddresses[fromIndex],
+                  validAddresses[toIndex],
+                  network,
+                  Math.floor(Date.now() / 1000) - i * 86400 - 3600, // 1 hour earlier
+                  true
+                ));
+              }
             }
           }
         } catch (error) {
@@ -385,6 +537,26 @@ export default function WalletAnalyzerPage() {
               Math.floor(Date.now() / 1000) - Math.floor(Math.random() * 30) * 86400
             )
           );
+          
+          // Add token transfers if requested
+          if (includeTokenTransfers) {
+            allInteractions.push(
+              generateMockInteraction(
+                validAddresses[0],
+                validAddresses[1],
+                network,
+                Math.floor(Date.now() / 1000) - Math.floor(Math.random() * 30) * 86400 - 7200, // 2 hours earlier
+                true
+              ),
+              generateMockInteraction(
+                validAddresses[1],
+                validAddresses[0],
+                network,
+                Math.floor(Date.now() / 1000) - Math.floor(Math.random() * 30) * 86400 - 7200, // 2 hours earlier
+                true
+              )
+            );
+          }
         }
         totalTxnsScanned += Math.floor(Math.random() * 100) + 50; // Simulate scanning transactions
       }
@@ -409,6 +581,26 @@ export default function WalletAnalyzerPage() {
               Math.floor(Date.now() / 1000) - Math.floor(Math.random() * 30) * 86400
             )
           );
+          
+          // Add token transfers if requested
+          if (includeTokenTransfers) {
+            allInteractions.push(
+              generateMockInteraction(
+                validAddresses[i],
+                validAddresses[0],
+                network,
+                Math.floor(Date.now() / 1000) - Math.floor(Math.random() * 30) * 86400 - 3600,
+                true
+              ),
+              generateMockInteraction(
+                validAddresses[1],
+                validAddresses[i],
+                network,
+                Math.floor(Date.now() / 1000) - Math.floor(Math.random() * 30) * 86400 - 3600,
+                true
+              )
+            );
+          }
         }
       }
       
@@ -428,6 +620,17 @@ export default function WalletAnalyzerPage() {
       setIsAnalyzing(false);
     }
   };
+
+  // Get sort indicator icon for a field
+  const getSortIndicator = (field: SortField) => {
+    if (sortField !== field) return null;
+    
+    return sortDirection === 'asc' 
+      ? <span className="ml-1">▲</span> 
+      : <span className="ml-1">▼</span>;
+  };
+
+  const filteredInteractions = getSortedAndFilteredInteractions();
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-[#2e026d] to-[#15162c] p-6">
@@ -484,45 +687,63 @@ export default function WalletAnalyzerPage() {
                 </button>
                 
                 <div className="text-sm text-gray-400">
-                  {getValidAddressCount()}/2 valid addresses
+                  {getValidAddressCount()}/{walletAddresses.length} valid addresses
                 </div>
               </div>
             </div>
             
-            {/* Blockchain Networks */}
-            <div className="mb-6">
-              <h2 className="text-xl font-bold text-white mb-4">Blockchain Networks</h2>
-              
-              <div className="mb-4">
-                <div className="flex items-center">
+            {/* Token and Blockchain Networks */}
+            <div className="mb-6 grid grid-cols-1 lg:grid-cols-5 gap-6">
+              <div className="lg:col-span-1">
+                <h2 className="text-xl font-bold text-white mb-4">Options</h2>
+                <div className="flex items-center mb-4">
                   <input
                     type="checkbox"
-                    id="all-networks"
-                    checked={areAllNetworksSelected}
-                    onChange={() => toggleNetwork('all')}
+                    id="include-tokens"
+                    checked={includeTokenTransfers}
+                    onChange={() => setIncludeTokenTransfers(!includeTokenTransfers)}
                     className="rounded border-gray-600 bg-white/5 text-indigo-600 focus:ring-indigo-500"
                   />
-                  <label htmlFor="all-networks" className="ml-2 text-gray-200 font-medium">
-                    All Networks
+                  <label htmlFor="include-tokens" className="ml-2 text-gray-200">
+                    Include Token Transfers
                   </label>
                 </div>
               </div>
               
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-                {blockchainNetworks.map((network) => (
-                  <div key={network.id} className="flex items-center">
+              <div className="lg:col-span-4">
+                <h2 className="text-xl font-bold text-white mb-4">Blockchain Networks</h2>
+                
+                <div className="mb-4">
+                  <div className="flex items-center">
                     <input
                       type="checkbox"
-                      id={`network-${network.id}`}
-                      checked={selectedNetworks.includes(network.id)}
-                      onChange={() => toggleNetwork(network.id)}
+                      id="all-networks"
+                      checked={areAllNetworksSelected}
+                      onChange={() => toggleNetwork('all')}
                       className="rounded border-gray-600 bg-white/5 text-indigo-600 focus:ring-indigo-500"
                     />
-                    <label htmlFor={`network-${network.id}`} className="ml-2 text-gray-200">
-                      <span className="mr-1">{network.icon}</span> {network.name}
+                    <label htmlFor="all-networks" className="ml-2 text-gray-200 font-medium">
+                      All Networks
                     </label>
                   </div>
-                ))}
+                </div>
+                
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                  {blockchainNetworks.map((network) => (
+                    <div key={network.id} className="flex items-center">
+                      <input
+                        type="checkbox"
+                        id={`network-${network.id}`}
+                        checked={selectedNetworks.includes(network.id)}
+                        onChange={() => toggleNetwork(network.id)}
+                        className="rounded border-gray-600 bg-white/5 text-indigo-600 focus:ring-indigo-500"
+                      />
+                      <label htmlFor={`network-${network.id}`} className="ml-2 text-gray-200">
+                        <span className="mr-1">{network.icon}</span> {network.name}
+                      </label>
+                    </div>
+                  ))}
+                </div>
               </div>
             </div>
             
@@ -598,68 +819,179 @@ export default function WalletAnalyzerPage() {
                 </div>
               </div>
               
-              {/* Table View */}
-              {activeTab === 'table' && interactions.length > 0 && (
-                <div className="bg-white/5 rounded-lg overflow-hidden">
-                  <div className="overflow-x-auto">
-                    <table className="min-w-full divide-y divide-gray-700">
-                      <thead className="bg-gray-800">
-                        <tr>
-                          <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider">
-                            Network
-                          </th>
-                          <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider">
-                            From
-                          </th>
-                          <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider">
-                            To
-                          </th>
-                          <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider">
-                            Value
-                          </th>
-                          <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider">
-                            Date
-                          </th>
-                          <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider">
-                            Transaction
-                          </th>
-                        </tr>
-                      </thead>
-                      <tbody className="bg-white/5 divide-y divide-gray-700">
-                        {interactions.map((interaction, index) => (
-                          <tr key={index} className="hover:bg-gray-700/30">
-                            <td className="px-6 py-4 whitespace-nowrap text-sm">
-                              <span className="mr-1">{blockchainNetworks.find(n => n.id === interaction.network)?.icon}</span>
-                              {interaction.networkName}
-                            </td>
-                            <td className="px-6 py-4 whitespace-nowrap text-sm">
-                              {shortenAddress(interaction.from)}
-                            </td>
-                            <td className="px-6 py-4 whitespace-nowrap text-sm">
-                              {shortenAddress(interaction.to)}
-                            </td>
-                            <td className="px-6 py-4 whitespace-nowrap text-sm">
-                              {parseFloat(interaction.value) > 0 
-                                ? `${(parseFloat(interaction.value) / 1e18).toFixed(4)} ETH` 
-                                : 'Contract Call'}
-                            </td>
-                            <td className="px-6 py-4 whitespace-nowrap text-sm">
-                              {formatDate(interaction.timestamp)}
-                            </td>
-                            <td className="px-6 py-4 whitespace-nowrap text-sm text-indigo-400">
-                              <a 
-                                href={`https://${interaction.network === 'ethereum' ? '' : interaction.network + '.'}etherscan.io/tx/${interaction.txHash}`}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="hover:underline"
-                              >
-                                {interaction.txHash.substring(0, 10)}...
-                              </a>
-                            </td>
+              {/* Table View with Filtering */}
+              {activeTab === 'table' && (
+                <div className="space-y-4">
+                  {/* Filters */}
+                  <div className="bg-white/5 p-4 rounded-lg mb-4">
+                    <h3 className="text-white font-medium mb-3">Filter & Sort</h3>
+                    <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                      <div>
+                        <label className="block text-gray-300 text-sm mb-1">Network</label>
+                        <select 
+                          value={filterNetwork} 
+                          onChange={(e) => setFilterNetwork(e.target.value)}
+                          className="w-full bg-gray-800 border border-gray-600 rounded px-2 py-1 text-white text-sm"
+                        >
+                          <option value="">All Networks</option>
+                          {selectedNetworks.map(id => {
+                            const network = blockchainNetworks.find(n => n.id === id);
+                            return network ? (
+                              <option key={id} value={id}>{network.icon} {network.name}</option>
+                            ) : null;
+                          })}
+                        </select>
+                      </div>
+                      
+                      <div>
+                        <label className="block text-gray-300 text-sm mb-1">From Address</label>
+                        <input 
+                          type="text" 
+                          value={filterFrom} 
+                          onChange={(e) => setFilterFrom(e.target.value)}
+                          placeholder="Filter by sender"
+                          className="w-full bg-gray-800 border border-gray-600 rounded px-2 py-1 text-white text-sm"
+                        />
+                      </div>
+                      
+                      <div>
+                        <label className="block text-gray-300 text-sm mb-1">To Address</label>
+                        <input 
+                          type="text" 
+                          value={filterTo} 
+                          onChange={(e) => setFilterTo(e.target.value)}
+                          placeholder="Filter by receiver"
+                          className="w-full bg-gray-800 border border-gray-600 rounded px-2 py-1 text-white text-sm"
+                        />
+                      </div>
+                      
+                      <div className="grid grid-cols-2 gap-2">
+                        <div>
+                          <label className="block text-gray-300 text-sm mb-1">Date From</label>
+                          <input 
+                            type="date" 
+                            value={filterDateStart} 
+                            onChange={(e) => setFilterDateStart(e.target.value)}
+                            className="w-full bg-gray-800 border border-gray-600 rounded px-2 py-1 text-white text-sm"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-gray-300 text-sm mb-1">Date To</label>
+                          <input 
+                            type="date" 
+                            value={filterDateEnd} 
+                            onChange={(e) => setFilterDateEnd(e.target.value)}
+                            className="w-full bg-gray-800 border border-gray-600 rounded px-2 py-1 text-white text-sm"
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                
+                  {/* Table */}
+                  <div className="bg-white/5 rounded-lg overflow-hidden">
+                    <div className="overflow-x-auto">
+                      <table className="min-w-full divide-y divide-gray-700">
+                        <thead className="bg-gray-800">
+                          <tr>
+                            <th 
+                              scope="col" 
+                              className="px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider cursor-pointer"
+                              onClick={() => handleSortChange('network')}
+                            >
+                              Network {getSortIndicator('network')}
+                            </th>
+                            <th 
+                              scope="col" 
+                              className="px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider cursor-pointer"
+                              onClick={() => handleSortChange('from')}
+                            >
+                              From {getSortIndicator('from')}
+                            </th>
+                            <th 
+                              scope="col" 
+                              className="px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider cursor-pointer"
+                              onClick={() => handleSortChange('to')}
+                            >
+                              To {getSortIndicator('to')}
+                            </th>
+                            <th 
+                              scope="col" 
+                              className="px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider cursor-pointer"
+                              onClick={() => handleSortChange('value')}
+                            >
+                              Value {getSortIndicator('value')}
+                            </th>
+                            <th 
+                              scope="col" 
+                              className="px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider cursor-pointer"
+                              onClick={() => handleSortChange('date')}
+                            >
+                              Date {getSortIndicator('date')}
+                            </th>
+                            <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-300 uppercase tracking-wider">
+                              Transaction
+                            </th>
                           </tr>
-                        ))}
-                      </tbody>
-                    </table>
+                        </thead>
+                        <tbody className="bg-white/5 divide-y divide-gray-700">
+                          {filteredInteractions.length > 0 ? (
+                            filteredInteractions.map((interaction, index) => (
+                              <tr key={index} className={`hover:bg-gray-700/30 ${interaction.isToken ? 'bg-gray-800/20' : ''}`}>
+                                <td className="px-6 py-4 whitespace-nowrap text-sm">
+                                  <span className="mr-1">{blockchainNetworks.find(n => n.id === interaction.network)?.icon}</span>
+                                  {interaction.networkName}
+                                </td>
+                                <td className="px-6 py-4 whitespace-nowrap text-sm">
+                                  {shortenAddress(interaction.from)}
+                                </td>
+                                <td className="px-6 py-4 whitespace-nowrap text-sm">
+                                  {shortenAddress(interaction.to)}
+                                </td>
+                                <td className="px-6 py-4 whitespace-nowrap text-sm">
+                                  {interaction.isToken ? (
+                                    <span className="flex items-center">
+                                      <span className="bg-blue-900/50 text-blue-200 text-xs px-2 py-0.5 rounded mr-2">
+                                        Token
+                                      </span>
+                                      {(parseFloat(interaction.value) / Math.pow(10, parseInt(interaction.tokenDecimal || '18'))).toFixed(4)} {interaction.tokenSymbol}
+                                    </span>
+                                  ) : (
+                                    parseFloat(interaction.value) > 0 
+                                      ? `${(parseFloat(interaction.value) / 1e18).toFixed(4)} ETH` 
+                                      : 'Contract Call'
+                                  )}
+                                </td>
+                                <td className="px-6 py-4 whitespace-nowrap text-sm">
+                                  {formatDate(interaction.timestamp)}
+                                </td>
+                                <td className="px-6 py-4 whitespace-nowrap text-sm text-indigo-400">
+                                  <a 
+                                    href={`https://${interaction.network === 'ethereum' ? '' : interaction.network + '.'}etherscan.io/tx/${interaction.txHash}`}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="hover:underline"
+                                  >
+                                    {interaction.txHash.substring(0, 10)}...
+                                  </a>
+                                </td>
+                              </tr>
+                            ))
+                          ) : (
+                            <tr>
+                              <td colSpan={6} className="px-6 py-8 text-center text-gray-400">
+                                No interactions found matching your filters
+                              </td>
+                            </tr>
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                  
+                  {/* Results counter */}
+                  <div className="text-sm text-gray-400 text-right">
+                    Showing {filteredInteractions.length} of {interactions.length} interactions
                   </div>
                 </div>
               )}
@@ -674,7 +1006,7 @@ export default function WalletAnalyzerPage() {
                       </div>
                       <TransactionGraph 
                         wallets={walletAddresses.filter(isValidEVMAddress)} 
-                        transactions={interactions}
+                        transactions={filteredInteractions}
                         onNodeClick={openAddressExplorer}
                         onEdgeClick={openTransactionExplorer}
                       />
@@ -690,18 +1022,18 @@ export default function WalletAnalyzerPage() {
               {/* Timeline View */}
               {activeTab === 'timeline' && (
                 <div className="bg-white/5 rounded-lg p-4">
-                  {interactions.length > 0 ? (
+                  {filteredInteractions.length > 0 ? (
                     <div className="w-full">
                       <div className="text-white font-medium mb-4">Interaction Timeline</div>
                       {/* Simple timeline visualization */}
                       <div className="relative">
                         <div className="absolute left-0 top-10 w-full border-t border-gray-700"></div>
-                        {interactions
+                        {filteredInteractions
                           .sort((a, b) => a.timestamp - b.timestamp)
                           .map((interaction, index) => {
                             // Calculate position along the timeline
-                            const minTime = Math.min(...interactions.map(i => i.timestamp));
-                            const maxTime = Math.max(...interactions.map(i => i.timestamp));
+                            const minTime = Math.min(...filteredInteractions.map(i => i.timestamp));
+                            const maxTime = Math.max(...filteredInteractions.map(i => i.timestamp));
                             const timeRange = maxTime - minTime || 1; // Avoid division by zero
                             const position = ((interaction.timestamp - minTime) / timeRange) * 100;
                             
@@ -715,10 +1047,10 @@ export default function WalletAnalyzerPage() {
                                 }}
                               >
                                 <div 
-                                  className="w-3 h-3 rounded-full cursor-pointer"
+                                  className={`w-3 h-3 rounded-full cursor-pointer ${interaction.isToken ? 'ring-2 ring-blue-400' : ''}`}
                                   style={{ backgroundColor: getNetworkColor(interaction.network) }}
                                   onClick={() => openTransactionExplorer(interaction)}
-                                  title={`${formatDate(interaction.timestamp)}: ${shortenAddress(interaction.from)} → ${shortenAddress(interaction.to)}`}
+                                  title={`${formatDate(interaction.timestamp)}: ${shortenAddress(interaction.from)} → ${shortenAddress(interaction.to)} ${interaction.isToken ? `(${interaction.tokenSymbol})` : ''}`}
                                 ></div>
                                 <div className="text-xs text-gray-400 mt-1">
                                   {new Date(interaction.timestamp * 1000).toLocaleDateString()}
