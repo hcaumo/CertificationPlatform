@@ -1,40 +1,18 @@
-"use client";
-
 import React from 'react';
 import { useRouter } from 'next/navigation';
 
 const Navigation = () => {
     const router = useRouter();
-    
-    // Your navigation component logic here
-    
+
     return (
-        <nav className="bg-white/10 p-4 backdrop-blur-lg">
-            <div className="container mx-auto flex justify-between items-center">
-                <div className="text-white font-bold text-xl cursor-pointer" onClick={() => router.push('/')}>
-                    Drexfy Certification
-                </div>
-                <div className="space-x-4">
-                    <button 
-                        onClick={() => router.push('/')}
-                        className="text-white hover:text-gray-300"
-                    >
-                        Home
-                    </button>
-                    <button 
-                        onClick={() => router.push('/certifications')}
-                        className="text-white hover:text-gray-300"
-                    >
-                        Certifications
-                    </button>
-                    <button 
-                        onClick={() => router.push('/api/auth/signin')}
-                        className="bg-indigo-600 text-white px-4 py-2 rounded hover:bg-indigo-700"
-                    >
-                        Sign In
-                    </button>
-                </div>
-            </div>
+        <nav className="flex space-x-4 p-4 bg-gray-800 text-white">
+            <button onClick={() => router.push('/dashboard')} className="hover:underline">
+                Dashboard
+            </button>
+            <button onClick={() => router.push('/auth/signin')} className="hover:underline">
+                Sign In
+            </button>
+            {/* Add more navigation items as needed */}
         </nav>
     );
 };
